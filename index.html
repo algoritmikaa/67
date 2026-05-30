@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AURA COLLECTOR — Собери свою ауру</title>
+    <style>
+        :root {
+            --bg: #05051a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
+            height: 100vh;
+            width: 100vw;
+            cursor: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none;
+        }
+
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        .ui-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            z-index: 10;
+            padding: 24px 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .score-display {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+        }
+        .score-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.25em;
+            color: rgba(180, 200, 255, 0.7);
+            font-weight: 500;
+        }
+        .score-value {
+            font-size: 3rem;
+            font-weight: 900;
+            background: linear-gradient(180deg, #ffffff 0%, #a0d8ff 40%, #7b5fff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 20px rgba(140, 120, 255, 0.8));
+            letter-spacing: -0.02em;
+            line-height: 1;
+        }
+        .aura-meter-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 4px;
+        }
+        .aura-meter-label {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.3em;
+            color: rgba(200, 180, 255, 0.6);
+            font-weight: 600;
+        }
+        .aura-meter-bar {
+            width: 140px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+        }
+        .aura-meter-fill {
+            height: 100%;
+            border-radius: 10px;
+            background: linear-gradient(90deg, #00d4ff, #9b59ff, #ff5e9c);
+            transition: width 0.3s ease;
+            box-shadow: 0 0 16px rgba(150, 100, 255, 0.7);
+            width: 0%;
+        }
+        .combo-display {
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            color: #ffb347;
+            opacity: 0;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            transform: translateY(5px);
+            text-shadow: 0 0 18px rgba(255, 170, 50, 0.9);
+        }
+        .combo-display.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .hint-text {
+            position: fixed;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            pointer-events: none;
+            font-size: 0.7rem;
+            letter-spacing: 0.2em;
+            color: rgba(180, 200, 240, 0.5);
+            text-align: center;
+            transition: opacity 0.6s ease;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-overlay">
+        <div class="score-display">
+            <span class="score-label">Аура</span>
+            <span class="score-value" id="scoreText">0</span>
+        </div>
+        <div class="aura-meter-container">
+            <span class="aura-meter-label">Заряд</span>
+            <div class="aura-meter-bar">
+                <div class="aura-meter-fill" id="auraFill"></div>
+            </div>
+        </div>
+        <div class="combo-display" id="comboText">COMBO x1</div>
+    </div>
+    <div class="hint-text" id="hintText">двигай курсор • собирай кристаллы ауры</div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const scoreTextEl = document.getElementById('scoreText');
+            const auraFillEl = document.getElementById('auraFill');
+            const comboTextEl = document.getElementById('comboText');
+            const hintTextEl = document.getElementById('hintText');
+
+            let W, H, dpr;
+            let mouseX = 0,
+                mouseY = 0;
+            let targetMouseX = 0,
+                targetMouseY = 0;
+            let playerX = 0,
+                playerY = 0;
+            let playerTrail = [];
+            const MAX_TRAIL = 45;
+            let score = 0;
+            let displayScore = 0;
+            let comboCount = 0;
+            let comboTimer = 0;
+            const COMBO_WINDOW = 2.2;
+            let auraCharge = 100;
+            const MAX_AURA_CHARGE = 100;
+            let screenShake = 0;
+            let shakeX = 0,
+                shakeY = 0;
+            let particles = [];
+            let collectibles = [];
+            let floatingTexts = [];
+            let pulseRings = [];
+            let time = 0;
+            let spawnTimer = 0;
+            let spawnInterval = 1.5;
+            let difficultyLevel = 1;
+            let gameTime = 0;
+            let hintOpacity = 1;
+            let playerGlowPulse = 0;
+
+            // Orbiting aura particles around player
+            let orbitAngles = [0, Math.PI * 0.4, Math.PI * 0.8, Math.PI * 1.3, Math.PI * 1.7, Math.PI * 2.1];
+            let orbitSpeeds = [1.8, -1.3, 2.1, -1.6, 1.5, -1.9];
+            let orbitDistances = [28, 36, 22, 40, 30, 34];
+
+            const PLAYER_BASE_RADIUS = 16;
+
+            function resize() {
+                dpr = Math.min(window.devicePixelRatio || 1, 2);
+                W = window.innerWidth;
+                H = window.innerHeight;
+                canvas.width = W * dpr;
+                canvas.height = H * dpr;
+                canvas.style.width = W + 'px';
+                canvas.style.height = H + 'px';
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(dpr, dpr);
+                if (playerX === 0 && playerY === 0) {
+                    playerX = W / 2;
+                    playerY = H / 2;
+                    mouseX = W / 2;
+                    mouseY = H / 2;
+                    targetMouseX = W / 2;
+                    targetMouseY = H / 2;
+                }
+            }
+
+            window.addEventListener('resize', resize);
+            resize();
+
+            // Initialize player at center
+            playerX = W / 2;
+            playerY = H / 2;
+            mouseX = W / 2;
+            mouseY = H / 2;
+            targetMouseX = W / 2;
+            targetMouseY = H / 2;
+
+            // Mouse / touch tracking
+            window.addEventListener('mousemove', (e) => {
+                targetMouseX = e.clientX;
+                targetMouseY = e.clientY;
+                if (hintOpacity > 0.05) hintOpacity -= 0.03;
+            });
+            window.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                targetMouseX = e.touches[0].clientX;
+                targetMouseY = e.touches[0].clientY;
+                if (hintOpacity > 0.05) hintOpacity -= 0.03;
+            }, { passive: false });
+            window.addEventListener('touchstart', (e) => {
+                targetMouseX = e.touches[0].clientX;
+                targetMouseY = e.touches[0].clientY;
+                if (hintOpacity > 0.05) hintOpacity -= 0.03;
+            });
+            window.addEventListener('click', () => {
+                if (hintOpacity > 0.05) hintOpacity -= 0.15;
+            });
+
+            // --- Particle System ---
+            function spawnParticles(x, y, count, colorBase, speedRange, lifeRange, sizeRange) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = speedRange[0] + Math.random() * (speedRange[1] - speedRange[0]);
+                    const life = lifeRange[0] + Math.random() * (lifeRange[1] - lifeRange[0]);
+                    const size = sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]);
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: life,
+                        maxLife: life,
+                        size: size,
+                        color: colorBase,
+                        type: 'spark',
+                    });
+                }
+            }
+
+            function spawnFloatingText(x, y, text, color, size) {
+                floatingTexts.push({
+                    x: x,
+                    y: y,
+                    text: text,
+                    life: 1.8,
+                    maxLife: 1.8,
+                    color: color,
+                    size: size,
+                    vy: -60 - Math.random() * 80,
+                });
+            }
+
+            function spawnPulseRing(x, y, color, maxRadius) {
+                pulseRings.push({
+                    x: x,
+                    y: y,
+                    radius: 4,
+                    maxRadius: maxRadius,
+                    life: 0.7,
+                    maxLife: 0.7,
+                    color: color,
+                });
+            }
+
+            // --- Collectible Creation ---
+            function createCollectible(x, y, type) {
+                let value, color, size, rarity;
+                if (type === 'golden') {
+                    value = 67;
+                    color = '#ffd740';
+                    size = 15;
+                    rarity = 'golden';
+                } else if (type === 'epic') {
+                    value = 100;
+                    color = '#e040ff';
+                    size = 18;
+                    rarity = 'epic';
+                } else {
+                    value = 10;
+                    color = '#00e0ff';
+                    size = 11;
+                    rarity = 'common';
+                }
+                return {
+                    x: x,
+                    y: y,
+                    value: value,
+                    color: color,
+                    size: size,
+                    rarity: rarity,
+                    life: 5 + Math.random() * 7,
+                    maxLife: 5 + Math.random() * 7,
+                    pulse: Math.random() * Math.PI * 2,
+                    sparkTimer: 0,
+                    glowPhase: Math.random() * Math.PI * 2,
+                };
+            }
+
+            function spawnCollectible() {
+                const margin = 60;
+                const x = margin + Math.random() * (W - margin * 2);
+                const y = margin + Math.random() * (H - margin * 2);
+                const roll = Math.random();
+                let type = 'common';
+                if (roll < 0.06) type = 'epic';
+                else if (roll < 0.18) type = 'golden';
+                collectibles.push(createCollectible(x, y, type));
+            }
+
+            // --- Screen Shake ---
+            function addScreenShake(intensity) {
+                screenShake = Math.max(screenShake, intensity);
+            }
+
+            // --- Collect ---
+            function collectItem(item) {
+                const isGolden = item.rarity === 'golden';
+                const isEpic = item.rarity === 'epic';
+                const baseVal = item.value;
+                const comboMultiplier = Math.min(comboCount + 1, 10);
+                const finalVal = baseVal * comboMultiplier;
+                score += finalVal;
+                comboCount++;
+                comboTimer = COMBO_WINDOW;
+                auraCharge = Math.min(MAX_AURA_CHARGE, auraCharge + (isEpic ? 25 : isGolden ? 16 : 8));
+
+                // Particles
+                const pColor = item.color;
+                const pCount = isEpic ? 50 : isGolden ? 35 : 20;
+                spawnParticles(item.x, item.y, pCount, pColor, [80, 350], [0.5, 1.8], [1.5, 6]);
+                spawnPulseRing(item.x, item.y, pColor, isEpic ? 180 : isGolden ? 130 : 90);
+
+                // Floating text
+                let txt = '+' + finalVal;
+                if (isGolden) txt = '+67 АУРА ✦';
+                if (isEpic) txt = '+100 ЭПИК ⚡';
+                if (comboCount >= 5) txt += ' x' + comboMultiplier;
+                spawnFloatingText(item.x, item.y - 10, txt, item.color, isEpic ? 26 : isGolden ? 22 : 16);
+
+                // Shake
+                addScreenShake(isEpic ? 14 : isGolden ? 9 : 4);
+
+                // Remove item
+                const idx = collectibles.indexOf(item);
+                if (idx > -1) collectibles.splice(idx, 1);
+
+                // Spawn extra ambient sparkles
+                if (isGolden || isEpic) {
+                    spawnParticles(item.x, item.y, 15, '#ffffff', [30, 160], [0.3, 1.0], [1, 3]);
+                }
+            }
+
+            // --- Update Functions ---
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function updateFloatingTexts(dt) {
+                for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                    const ft = floatingTexts[i];
+                    ft.y += ft.vy * dt;
+                    ft.life -= dt;
+                    if (ft.life <= 0) floatingTexts.splice(i, 1);
+                }
+            }
+
+            function updatePulseRings(dt) {
+                for (let i = pulseRings.length - 1; i >= 0; i--) {
+                    const pr = pulseRings[i];
+                    pr.life -= dt;
+                    pr.radius += (pr.maxRadius - pr.radius) * 8 * dt;
+                    if (pr.life <= 0) pulseRings.splice(i, 1);
+                }
+            }
+
+            function updateCollectibles(dt) {
+                for (let i = collectibles.length - 1; i >= 0; i--) {
+                    const c = collectibles[i];
+                    c.life -= dt;
+                    c.pulse += dt * 3;
+                    c.glowPhase += dt * 2.5;
+                    c.sparkTimer -= dt;
+                    if (c.sparkTimer <= 0 && c.rarity === 'golden') {
+                        c.sparkTimer = 0.25 + Math.random() * 0.4;
+                        spawnParticles(c.x + (Math.random() - 0.5) * 20, c.y + (Math.random() - 0.5) * 20,
+                            2, '#fffbe6', [10, 40], [0.2, 0.5], [0.8, 2]);
+                    }
+                    if (c.life <= 0) {
+                        // Fade out particle effect
+                        spawnParticles(c.x, c.y, 6, c.color, [20, 70], [0.2, 0.6], [1, 3]);
+                        collectibles.splice(i, 1);
+                    }
+                }
+            }
+
+            // --- Draw Functions ---
+            function drawBackground() {
+                // Deep space gradient
+                const grad = ctx.createRadialGradient(W / 2, H * 0.4, 0, W / 2, H * 0.5, Math.max(W, H) * 0.9);
+                grad.addColorStop(0, '#0d0d30');
+                grad.addColorStop(0.5, '#080820');
+                grad.addColorStop(1, '#020210');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Subtle grid lines
+                ctx.strokeStyle = 'rgba(60,80,140,0.06)';
+                ctx.lineWidth = 0.5;
+                const gridSpacing = 60;
+                for (let x = gridSpacing; x < W; x += gridSpacing) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, H);
+                    ctx.stroke();
+                }
+                for (let y = gridSpacing; y < H; y += gridSpacing) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(W, y);
+                    ctx.stroke();
+                }
+
+                // Nebula blobs
+                const nebulaColors = [
+                    { x: W * 0.25, y: H * 0.3, r: 280, c: 'rgba(80,30,140,0.04)' },
+                    { x: W * 0.7, y: H * 0.6, r: 350, c: 'rgba(20,60,160,0.04)' },
+                    { x: W * 0.5, y: H * 0.75, r: 400, c: 'rgba(100,20,100,0.03)' },
+                    { x: W * 0.15, y: H * 0.7, r: 250, c: 'rgba(20,100,140,0.03)' },
+                ];
+                nebulaColors.forEach(n => {
+                    const ng = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+                    ng.addColorStop(0, n.c);
+                    ng.addColorStop(1, 'transparent');
+                    ctx.fillStyle = ng;
+                    ctx.fillRect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
+                });
+
+                // Stars
+                const starSeed = 42;
+                for (let i = 0; i < 180; i++) {
+                    const sx = ((i * 137.508 + starSeed) * 7919) % W;
+                    const sy = ((i * 251.731 + starSeed) * 6271) % H;
+                    const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(time * 1.7 + i * 0.7));
+                    const alpha = 0.25 + twinkle * 0.55;
+                    const size = 0.4 + twinkle * 1.2;
+                    ctx.fillStyle = `rgba(200,220,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawPlayerGlow(x, y, auraLevel) {
+                // Outer aura - huge soft glow
+                const outerGrad = ctx.createRadialGradient(x, y, PLAYER_BASE_RADIUS * 0.8, x, y, 90 + auraLevel * 30);
+                const hueShift = auraLevel * 15;
+                outerGrad.addColorStop(0, `hsla(${260 + hueShift}, 90%, 65%, 0.35)`);
+                outerGrad.addColorStop(0.4, `hsla(${255 + hueShift}, 80%, 55%, 0.15)`);
+                outerGrad.addColorStop(0.7, `hsla(${240 + hueShift}, 70%, 40%, 0.04)`);
+                outerGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = outerGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, 90 + auraLevel * 30, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Mid glow
+                const midGrad = ctx.createRadialGradient(x, y, PLAYER_BASE_RADIUS * 0.3, x, y, 40 + auraLevel * 15);
+                midGrad.addColorStop(0, 'rgba(180,210,255,0.7)');
+                midGrad.addColorStop(0.5, 'rgba(120,150,240,0.35)');
+                midGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = midGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, 40 + auraLevel * 15, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Inner bright core
+                const coreGrad = ctx.createRadialGradient(x, y, 0, x, y, PLAYER_BASE_RADIUS + auraLevel * 4);
+                coreGrad.addColorStop(0, 'rgba(255,255,255,1)');
+                coreGrad.addColorStop(0.25, 'rgba(240,245,255,0.9)');
+                coreGrad.addColorStop(0.6, 'rgba(160,200,255,0.5)');
+                coreGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = coreGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, PLAYER_BASE_RADIUS + auraLevel * 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Ground reflection glow
+                const groundGlowY = y + 55;
+                const groundGrad = ctx.createRadialGradient(x, groundGlowY, 0, x, groundGlowY, 70 + auraLevel * 20);
+                groundGrad.addColorStop(0, `rgba(150,170,240,${0.25 + auraLevel * 0.1})`);
+                groundGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = groundGrad;
+                ctx.beginPath();
+                ctx.ellipse(x, groundGlowY, 70 + auraLevel * 20, 18 + auraLevel * 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawPlayerTrail() {
+                if (playerTrail.length < 2) return;
+                for (let i = 0; i < playerTrail.length; i++) {
+                    const t = playerTrail[i];
+                    const alpha = (i / playerTrail.length) * 0.45;
+                    const size = 3 + (i / playerTrail.length) * 14;
+                    const grad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, size);
+                    grad.addColorStop(0, `rgba(160,200,255,${alpha})`);
+                    grad.addColorStop(0.6, `rgba(100,140,240,${alpha * 0.5})`);
+                    grad.addColorStop(1, 'transparent');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawPlayerOrbitals(x, y, auraLevel) {
+                orbitAngles.forEach((angle, i) => {
+                    orbitAngles[i] += orbitSpeeds[i] * 0.025;
+                    const ox = x + Math.cos(orbitAngles[i]) * orbitDistances[i] * (1 + auraLevel * 0.3);
+                    const oy = y + Math.sin(orbitAngles[i]) * orbitDistances[i] * (1 + auraLevel * 0.3);
+                    const oAlpha = 0.6 + auraLevel * 0.25;
+                    const oSize = 1.5 + auraLevel * 1.2;
+                    const og = ctx.createRadialGradient(ox, oy, 0, ox, oy, oSize * 3);
+                    og.addColorStop(0, `rgba(255,255,255,${oAlpha})`);
+                    og.addColorStop(0.4, `rgba(180,210,255,${oAlpha * 0.5})`);
+                    og.addColorStop(1, 'transparent');
+                    ctx.fillStyle = og;
+                    ctx.beginPath();
+                    ctx.arc(ox, oy, oSize * 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(ox, oy, oSize, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            function drawCollectible(c) {
+                const alpha = Math.min(1, c.life / 1.5);
+                const pulseScale = 1 + Math.sin(c.pulse) * 0.2;
+                const size = c.size * pulseScale;
+                const x = c.x;
+                const y = c.y;
+
+                // Outer glow
+                const outerGrad = ctx.createRadialGradient(x, y, size * 0.3, x, y, size * 2.5);
+                outerGrad.addColorStop(0, c.color.replace(')', `,${0.5 * alpha})`).replace('rgb',
+                    'rgba'));
+                outerGrad.addColorStop(0.5, c.color.replace(')', `,${0.2 * alpha})`).replace('rgb',
+                    'rgba'));
+                outerGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = outerGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, size * 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Sparkle cross (4-point star)
+                const crossLen = size * 2.2;
+                const crossThick = size * 0.35;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = c.color;
+                ctx.shadowColor = c.color;
+                ctx.shadowBlur = size * 1.5;
+                // Vertical bar
+                ctx.beginPath();
+                ctx.roundRect(x - crossThick, y - crossLen, crossThick * 2, crossLen * 2, crossThick);
+                ctx.fill();
+                // Horizontal bar
+                ctx.beginPath();
+                ctx.roundRect(x - crossLen, y - crossThick, crossLen * 2, crossThick * 2, crossThick);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.restore();
+
+                // Bright center
+                const centerGrad = ctx.createRadialGradient(x, y, 0, x, y, size * 0.8);
+                centerGrad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+                centerGrad.addColorStop(0.4, c.color.replace(')', `,${0.8 * alpha})`).replace('rgb',
+                'rgba'));
+                centerGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = centerGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, size * 0.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Golden extra sparkles
+                if (c.rarity === 'golden' || c.rarity === 'epic') {
+                    const sparkAlpha = 0.7 + Math.sin(c.glowPhase * 2) * 0.3;
+                    for (let s = 0; s < 6; s++) {
+                        const sa = (s / 6) * Math.PI * 2 + c.glowPhase;
+                        const sd = size * 2.8;
+                        const sx = x + Math.cos(sa) * sd;
+                        const sy = y + Math.sin(sa) * sd;
+                        ctx.fillStyle = `rgba(255,255,255,${sparkAlpha * alpha * 0.7})`;
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, 1.2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function drawPulseRingsList() {
+                pulseRings.forEach(pr => {
+                    const alpha = (pr.life / pr.maxLife) * 0.6;
+                    ctx.strokeStyle = pr.color.replace(')', `,${alpha})`).replace('rgb', 'rgba');
+                    ctx.lineWidth = 2 * (pr.life / pr.maxLife);
+                    ctx.beginPath();
+                    ctx.arc(pr.x, pr.y, pr.radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                });
+            }
+
+            function drawFloatingTextsList() {
+                floatingTexts.forEach(ft => {
+                    const alpha = Math.min(1, ft.life / 0.6);
+                    const scale = 1 + (1 - ft.life / ft.maxLife) * 0.4;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.font = `900 ${ft.size * scale}px "Segoe UI", "Inter", system-ui, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = ft.color;
+                    ctx.shadowColor = ft.color;
+                    ctx.shadowBlur = 20;
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.shadowColor = '#ffffff';
+                    ctx.shadowBlur = 8;
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                });
+            }
+
+            function drawVignette() {
+                const vignetteGrad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.55, W / 2, H / 2, Math.max(W,
+                    H) * 0.8);
+                vignetteGrad.addColorStop(0, 'transparent');
+                vignetteGrad.addColorStop(1, 'rgba(0,0,8,0.55)');
+                ctx.fillStyle = vignetteGrad;
+                ctx.fillRect(0, 0, W, H);
+            }
+
+            // --- Main Game Loop ---
+            function update(dt) {
+                const clampedDt = Math.min(dt, 0.1);
+                time += clampedDt;
+                gameTime += clampedDt;
+
+                // Smooth mouse follow
+                const mouseSmooth = 12;
+                mouseX += (targetMouseX - mouseX) * mouseSmooth * clampedDt;
+                mouseY += (targetMouseY - mouseY) * mouseSmooth * clampedDt;
+
+                // Player follows mouse with slight delay
+                const playerSmooth = 18;
+                playerX += (mouseX - playerX) * playerSmooth * clampedDt;
+                playerY += (mouseY - playerY) * playerSmooth * clampedDt;
+
+                // Player trail
+                const dx = playerX - (playerTrail.length > 0 ? playerTrail[playerTrail.length - 1].x : playerX);
+                const dy = playerY - (playerTrail.length > 0 ? playerTrail[playerTrail.length - 1].y : playerY);
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 1.5) {
+                    playerTrail.push({ x: playerX, y: playerY });
+                }
+                while (playerTrail.length > MAX_TRAIL) playerTrail.shift();
+
+                // Aura charge decay
+                auraCharge -= 2.5 * clampedDt;
+                if (auraCharge < 0) auraCharge = 0;
+                const auraLevel = auraCharge / MAX_AURA_CHARGE;
+
+                // Player glow pulse
+                playerGlowPulse += clampedDt * 4;
+                const currentPlayerRadius = PLAYER_BASE_RADIUS + auraLevel * 6 + Math.sin(playerGlowPulse) * 2;
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= clampedDt;
+                    if (comboTimer <= 0) {
+                        comboCount = 0;
+                        comboTimer = 0;
+                    }
+                }
+
+                // Screen shake
+                if (screenShake > 0) {
+                    shakeX = (Math.random() - 0.5) * screenShake * 2;
+                    shakeY = (Math.random() - 0.5) * screenShake * 2;
+                    screenShake -= clampedDt * 18;
+                    if (screenShake < 0) {
+                        screenShake = 0;
+                        shakeX = 0;
+                        shakeY = 0;
+                    }
+                }
+
+                // Spawn collectibles
+                spawnTimer -= clampedDt;
+                if (spawnTimer <= 0) {
+                    spawnTimer = spawnInterval + Math.random() * 1.2;
+                    spawnCollectible();
+                    if (Math.random() < 0.35) spawnCollectible();
+                }
+                // Increase difficulty
+                difficultyLevel = 1 + Math.floor(gameTime / 35);
+                spawnInterval = Math.max(0.35, 1.5 - difficultyLevel * 0.12);
+
+                // Cap collectibles
+                if (collectibles.length > 25) {
+                    const toRemove = collectibles.length - 25;
+                    for (let i = 0; i < toRemove; i++) {
+                        if (collectibles[i]) {
+                            spawnParticles(collectibles[i].x, collectibles[i].y, 4, collectibles[i].color, [15, 50], [0.2, 0.5],
+                                [1, 2.5]);
+                        }
+                    }
+                    collectibles.splice(0, toRemove);
+                }
+
+                // Update subsystems
+                updateParticles(clampedDt);
+                updateFloatingTexts(clampedDt);
+                updatePulseRings(clampedDt);
+                updateCollectibles(clampedDt);
+
+                // Collision detection
+                for (let i = collectibles.length - 1; i >= 0; i--) {
+                    const c = collectibles[i];
+                    const cdx = playerX - c.x;
+                    const cdy = playerY - c.y;
+                    const cdist = Math.sqrt(cdx * cdx + cdy * cdy);
+                    const collisionDist = currentPlayerRadius + c.size + 10;
+                    if (cdist < collisionDist) {
+                        collectItem(c);
+                    }
+                }
+
+                // Score display smoothing
+                displayScore += (score - displayScore) * 10 * clampedDt;
+                if (Math.abs(score - displayScore) < 0.5) displayScore = score;
+
+                // Update UI
+                scoreTextEl.textContent = Math.floor(displayScore).toLocaleString();
+                auraFillEl.style.width = (auraCharge / MAX_AURA_CHARGE * 100) + '%';
+                if (comboCount >= 2) {
+                    comboTextEl.textContent = 'COMBO x' + Math.min(comboCount + 1, 10);
+                    comboTextEl.classList.add('active');
+                } else if (comboCount <= 1 && comboTimer <= 0) {
+                    comboTextEl.classList.remove('active');
+                }
+                if (comboCount >= 5) {
+                    comboTextEl.style.color = '#ff5e9c';
+                    comboTextEl.style.textShadow = '0 0 22px rgba(255,90,150,0.95)';
+                } else if (comboCount >= 3) {
+                    comboTextEl.style.color = '#ffb347';
+                    comboTextEl.style.textShadow = '0 0 18px rgba(255,170,50,0.9)';
+                } else {
+                    comboTextEl.style.color = '#ffd740';
+                    comboTextEl.style.textShadow = '0 0 14px rgba(255,210,60,0.7)';
+                }
+
+                // Hint fade
+                if (hintOpacity > 0.001) {
+                    hintTextEl.style.opacity = hintOpacity;
+                } else {
+                    hintTextEl.style.opacity = '0';
+                }
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+                drawPlayerTrail();
+                drawPulseRingsList();
+
+                // Draw collectibles
+                collectibles.forEach(c => drawCollectible(c));
+
+                // Draw player
+                const auraLevel = auraCharge / MAX_AURA_CHARGE;
+                drawPlayerGlow(playerX, playerY, auraLevel);
+                drawPlayerOrbitals(playerX, playerY, auraLevel);
+
+                // Draw particles
+                particles.forEach(p => {
+                    const alpha = p.life / p.maxLife;
+                    const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+                    grad.addColorStop(0, p.color.replace(')', `,${alpha})`).replace('rgb', 'rgba'));
+                    grad.addColorStop(1, 'transparent');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                drawFloatingTextsList();
+
+                ctx.restore();
+
+                // Vignette (not affected by shake)
+                drawVignette();
+
+                // Custom cursor glow at mouse position
+                const cursorGlow = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 22);
+                cursorGlow.addColorStop(0, 'rgba(200,220,255,0.25)');
+                cursorGlow.addColorStop(0.5, 'rgba(140,170,240,0.08)');
+                cursorGlow.addColorStop(1, 'transparent');
+                ctx.fillStyle = cursorGlow;
+                ctx.beginPath();
+                ctx.arc(mouseX, mouseY, 22, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.beginPath();
+                ctx.arc(mouseX, mouseY, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(mouseX, mouseY, 8, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            function gameLoop(timestamp) {
+                const dt = Math.min(0.1, (timestamp - lastTimestamp) / 1000);
+                lastTimestamp = timestamp;
+                update(dt);
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+
+            let lastTimestamp = performance.now();
+
+            // Initial spawns
+            for (let i = 0; i < 8; i++) {
+                const margin = 70;
+                const x = margin + Math.random() * (W - margin * 2);
+                const y = margin + Math.random() * (H - margin * 2);
+                const type = Math.random() < 0.12 ? 'golden' : 'common';
+                collectibles.push(createCollectible(x, y, type));
+            }
+            spawnTimer = 1.2;
+
+            // Start
+            requestAnimationFrame(gameLoop);
+
+            console.log('%c✨ AURA COLLECTOR %cзапущен %c+67',
+                'font-size:1.4em;color:#c8a0ff;',
+                'font-size:1em;color:#aaa;',
+                'font-size:1.2em;color:#ffd740;font-weight:bold;');
+            console.log('%cСобирай кристаллы • Прокачивай ауру • Наслаждайся',
+                'color:#888;font-style:italic;');
+        })();
+    </script>
+</body>
+</html>
